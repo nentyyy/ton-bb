@@ -107,6 +107,16 @@ Recursive-descent без лимита глубины; ни в одном из к
 - ✅ Волна 3 (валидация блоков, transaction/mc-config, proof/signature) — HIGH/CRITICAL нет; 1 hardening-асимметрия + config-gated усечения.
 - ⬜ Не исследовано: `tddb/*` (cell DB / snapshots), QUIC.
 
+## Перекрёстная верификация (Opus-перезапуск)
+
+Агенты по `validate-query.cpp` и `crypto/block/*` были перезапущены с явным пином на Opus и **независимо сошлись** с первым проходом: HIGH/CRITICAL нет, те же guard'ы. Opus-агент дополнительно сделал git diff против импорт-коммита и подтвердил, что `transaction.cpp`/`block.cpp`/`mc-config.cpp` **побайтово идентичны upstream** (модификаций нет).
+
+Остаточные не-эксплуатируемые наблюдения (для maintainers, не security):
+- Мёртвый код после `return true` в `check_neighbor_outbound_message` (`validate-query.cpp:5253`) — все security-проверки f0-ветки выполняются ДО него; пропускается лишь избыточный internal `fatal_error`. Косметика.
+- catch-блоки в `try_validate` (`validate-query.cpp:7594-7601`) ловят `vm::VmError`/`CellBuilder`, но не `std::out_of_range`/`std::bad_alloc`. Достижимого OOB-индекса не найдено, так что не эксплуатируется; но запас прочности узкий.
+
 ## Сводный вывод
 **NO VERIFIED HIGH-CONFIDENCE VULNERABILITY FOUND IN REVIEWED CODE.**
 Единственный подтверждённый реальный баг — неограниченная рекурсия парсеров Tolk/FunC (**LOW**, DoS только для server-side контракт-верификаторов). Всё остальное — либо защищено, либо требует привилегированного доступа (masterchain-config), либо детерминировано-безвредно.
+
+Аудитом покрыты: ADNL/TL, catchain/validator-session, TVM/BOC, overlay/RLDP/RLDP2/DHT/FEC, lite-server/external-msg, декомпрессия, компиляторы (Tolk/FunC/Fift), storage/torrent, валидация блоков (validate-query/transaction/block/mc-config), proof/signature. Не покрыто: `tddb/*` (cell DB / snapshots), QUIC/ngtcp2.
