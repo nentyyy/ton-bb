@@ -86,7 +86,27 @@ Recursive-descent без лимита глубины; ни в одном из к
 - `validator/impl/validate-query.cpp`, `collator-impl.cpp`, `accept-block.cpp`, `check-proof.cpp`, `crypto/block/*` — **валидация блоков, самая важная логика, НЕ исследована.**
 - `storage/*` (кроме проверенного path traversal), `tddb/*` (cell DB / snapshots) — не завершено.
 
+## Волна 3 — валидация блоков (результаты)
+
+### Проверено лично и БЕЗОПАСНО
+- **`check-proof.cpp` + `signature-set.cpp`** — проверка block-proof/подписей надёжна: сверка catchain-seqno и hash набора валидаторов, Ed25519 над `to_sign = ton_blockId(root_hash, file_hash)` (связывает подпись с Merkle-корнем блока → нет replay на другой блок), порог 2/3 (`signature-set.cpp:89,155`), `virt_hash == proof_blk_id.root_hash` (`check-proof.cpp:152`).
+
+### Кандидаты агентов — проверены и отклонены
+- **Асимметрия в `check_one_shard` (`validate-query.cpp:2071-2076`)**: в null-ветке ShardFees проверяется только `fees_collected_.is_zero()`, но не `funds_created_`. **Лично верифицировано:** нейтрализуется `basic_info_equal(compare_fees=true)` (`mc-config.cpp:922`, сравнивает оба поля). Может лишь занизить `import_created`/global_balance, **детерминированно** для всех валидаторов → ни форка, ни инфляции, ни выгоды. Hardening-замечание (добавить `&& descr->funds_created_.is_zero()`), не эксплойт.
+- **Signed-cast усечение fee/gas (`transaction.cpp:2881-2886, 3410-3411, 1304-1305`)**: `(long long)` каст uint64-значений; срабатывает только если fee/gas > 2^63, что достижимо **исключительно через враждебный masterchain-config** (привилегированный), не через пользовательское сообщение. Не user-triggerable.
+- **Validator-set total_weight overflow (`mc-config.cpp:698-703`)**: защищён проверкой `descr.weight > ~total_weight` до `+=`. `compute_validator_set` индексы/веса — `CHECK`-guarded. Безопасно.
+- **Per-transaction currency flow (`transaction.cpp:6111`)**: баланс из re-execution + сверка хэша транзакции, арифметика в `RefInt256`. Безопасно.
+- **Рекурсия обхода shard-hash (`mc-config.cpp:1318`)**: ограничена битовой глубиной шарда (~60). Безопасно.
+
+### Итог волны 3
+Полностью вооружаемого fork / inflation / invalid-accept бага НЕ найдено. `validate-query.cpp` исключительно защитный: почти каждое поле кандидата независимо пересчитывается и сравнивается (транзакции переисполняются и сверяются по хэшу; value-flow реконсилируется; новое состояние выводится применением Merkle-update к проверенному предыдущему). Остаточные риски — config-gated усечения (привилегированный masterchain-config).
+
 ## Статус
 - ✅ Волна 1 (сетевой/консенсусный слой) — HIGH/CRITICAL нет.
-- ⚠️ Волна 2 — 1 реальный LOW-баг (рекурсия компиляторов); storage path-traversal безопасен; валидация блоков и DB НЕ доисследованы (лимит сессии).
-- ⬜ Требуется волна 3 по валидации блоков и DB.
+- ⚠️ Волна 2 — 1 реальный LOW-баг (рекурсия компиляторов Tolk/FunC); storage path-traversal безопасен.
+- ✅ Волна 3 (валидация блоков, transaction/mc-config, proof/signature) — HIGH/CRITICAL нет; 1 hardening-асимметрия + config-gated усечения.
+- ⬜ Не исследовано: `tddb/*` (cell DB / snapshots), QUIC.
+
+## Сводный вывод
+**NO VERIFIED HIGH-CONFIDENCE VULNERABILITY FOUND IN REVIEWED CODE.**
+Единственный подтверждённый реальный баг — неограниченная рекурсия парсеров Tolk/FunC (**LOW**, DoS только для server-side контракт-верификаторов). Всё остальное — либо защищено, либо требует привилегированного доступа (masterchain-config), либо детерминировано-безвредно.
